@@ -1,0 +1,30 @@
+version: '3'
+services:
+  iris:
+    image: intersystemsdc/iris-community
+    ports:
+      - 1972
+      - 52773
+    environment:
+      IRIS_USERNAME: trino
+      IRIS_PASSWORD: trino
+      IRIS_NAMESPACE: DEMO
+  trino:
+    build: .
+    image: caretdev/trino-iris
+    volumes:
+      - ./iris.properties:/etc/trino/catalog/iris.properties
+    ports:
+      - 8080:8080
+  superset:
+    image: apache/superset:3.0.2
+    platform: linux/amd64
+    environment:
+      SUPERSET_SECRET_KEY: supersecret
+      SUPERSET_SQLALCHEMY_EXAMPLES_URI: trino://admin@trino:8080/iris/examples
+    volumes:
+      - ./superset_entrypoint.sh:/superset_entrypoint.sh
+      - ./superset_config.py:/app/pythonpath/superset_config.py
+    ports:
+      - 8088:8088
+    entrypoint: /superset_entrypoint.sh
