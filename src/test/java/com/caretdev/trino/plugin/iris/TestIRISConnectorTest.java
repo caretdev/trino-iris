@@ -1,20 +1,17 @@
 package com.caretdev.trino.plugin.iris;
 
-import io.trino.Session;
 import io.trino.plugin.jdbc.BaseJdbcConnectorTest;
-import io.trino.sql.planner.plan.TopNNode;
 import io.trino.testing.QueryRunner;
 import io.trino.testing.TestingConnectorBehavior;
-import io.trino.testing.TestingNames;
 import io.trino.testing.sql.SqlExecutor;
+import org.intellij.lang.annotations.Language;
 import org.testng.annotations.Test;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 
-import static com.caretdev.trino.plugin.iris.IRISQueryRunner.createIRISQueryRunner;
-import static io.trino.testing.TestingConnectorBehavior.*;
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
 public class TestIRISConnectorTest extends BaseJdbcConnectorTest {
 
@@ -32,14 +29,16 @@ public class TestIRISConnectorTest extends BaseJdbcConnectorTest {
                     SUPPORTS_AGGREGATION_PUSHDOWN_REGRESSION,
                     SUPPORTS_ARRAY,
                     SUPPORTS_COMMENT_ON_COLUMN,
-                    SUPPORTS_CREATE_TABLE_WITH_COLUMN_COMMENT,
-//                    SUPPORTS_CREATE_TABLE_WITH_TABLE_COMMENT,
+//                    SUPPORTS_CREATE_TABLE_WITH_COLUMN_COMMENT,
+                    SUPPORTS_COMMENT_ON_TABLE,
                     SUPPORTS_JOIN_PUSHDOWN_WITH_DISTINCT_FROM,
                     SUPPORTS_JOIN_PUSHDOWN_WITH_FULL_JOIN,
                     SUPPORTS_NEGATIVE_DATE,
                     SUPPORTS_PREDICATE_PUSHDOWN_WITH_VARCHAR_EQUALITY,
                     SUPPORTS_PREDICATE_PUSHDOWN_WITH_VARCHAR_INEQUALITY,
                     SUPPORTS_RENAME_SCHEMA,
+                    SUPPORTS_CREATE_SCHEMA,
+                    SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
                     SUPPORTS_ROW_TYPE -> false;
             default -> super.hasBehavior(connectorBehavior);
         };
@@ -74,24 +73,35 @@ public class TestIRISConnectorTest extends BaseJdbcConnectorTest {
     }
 
     @Override
-    protected Optional<SetColumnTypeSetup> filterSetColumnTypesDataProvider(SetColumnTypeSetup setup)
-    {
-        switch ("%s -> %s".formatted(setup.sourceColumnType(), setup.newColumnType())) {
-            case "varchar -> char(20)":
-                return Optional.of(setup.asUnsupported());
+    protected Optional<SetColumnTypeSetup> filterSetColumnTypesDataProvider(SetColumnTypeSetup setup) {
+        switch (setup.newColumnType()) {
+            case "decimal(38,3)": // -> decimal(22,3)
+            case "varchar": // -> varchar(65535)
+            case "char(20)": // -> varchar(20)
+            case "timestamp(3)": // -> timestamp(3)
+            case "timestamp(6)": // -> timestamp(3)
+                return Optional.empty();
         }
-//        return Optional.of(setup);
-        return Optional.of(setup.asUnsupported());
+        if (setup.sourceColumnType().startsWith("time(")) {
+//            No milliseconds
+            return Optional.of(setup.withNewValueLiteral("TIME '15:03:00'"));
+        }
+        return Optional.of(setup);
     }
 
-    @Test
+    @Override
     public void testCreateTableAsSelectSchemaNotFound() {
 //        not for IRIS
     }
 
     @Override
-    protected Optional<DataMappingTestSetup> filterDataMappingSmokeTestData(DataMappingTestSetup dataMappingTestSetup)
-    {
+    public void testCaseSensitiveDataMapping(DataMappingTestSetup dataMappingTestSetup) {
+
+    }
+
+
+    @Override
+    protected Optional<DataMappingTestSetup> filterDataMappingSmokeTestData(DataMappingTestSetup dataMappingTestSetup) {
         String typeName = dataMappingTestSetup.getTrinoTypeName();
         if (typeName.equals("time(3)") || typeName.equals("time(6)")
                 || typeName.equals("timestamp(3) with time zone")
@@ -102,4 +112,53 @@ public class TestIRISConnectorTest extends BaseJdbcConnectorTest {
         return Optional.of(dataMappingTestSetup);
     }
 
+    @Override
+    protected OptionalInt maxSchemaNameLength() {
+        return OptionalInt.of(128);
+    }
+
+    @Override
+    protected OptionalInt maxTableNameLength() {
+        return OptionalInt.of(512);
+    }
+
+    @Override
+    public void testCreateTableWithLongColumnName() {
+//        IRIS does not have fixed max length
+    }
+
+    @Override
+    public void testCreateTableWithLongTableName() {
+//        IRIS does not have fixed max length
+    }
+
+    @Override
+    public void testRenameTableToLongTableName() {
+//        IRIS does not have fixed max length
+    }
+
+    @Override
+    @Language("RegExp")
+    protected String errorMessageForInsertNegativeDate(String date) {
+        return ".*SQLCODE: <-104>:<Field validation failed in INSERT>.*\n.* < MIN .*";
+    }
+
+
+    @Test
+    public void testRenameSchema() {
+
+    }
+
+    @Override
+    public void testCreateTableSchemaNotFound() {
+        assertThatThrownBy(super::testCreateTableSchemaNotFound)
+                .hasMessageContaining("Expected query to fail: CREATE TABLE test_schema_");
+
+    }
+
+    @Override
+    public void testCreateSchema() {
+        assertThatThrownBy(super::testCreateTableSchemaNotFound)
+                .hasMessageContaining("Expected query to fail: CREATE TABLE test_schema_");
+    }
 }

@@ -32,28 +32,24 @@ import io.trino.plugin.jdbc.logging.RemoteQueryModifier;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.*;
 import io.trino.spi.expression.ConnectorExpression;
-
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Verify.verify;
-import static io.trino.plugin.jdbc.StandardColumnMappings.*;
-import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
-
 import io.trino.spi.statistics.TableStatistics;
 import io.trino.spi.type.*;
 
-import javax.swing.text.html.Option;
 import java.sql.*;
 import java.util.*;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Verify.verify;
+import static com.google.common.collect.Iterables.getOnlyElement;
 import static io.trino.plugin.jdbc.JdbcErrorCode.JDBC_ERROR;
 import static io.trino.plugin.jdbc.PredicatePushdownController.FULL_PUSHDOWN;
-
+import static io.trino.plugin.jdbc.StandardColumnMappings.*;
+import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
 import static io.trino.spi.type.CharType.createCharType;
-import static io.trino.spi.type.DateTimeEncoding.packDateTimeWithZone;
 import static io.trino.spi.type.DateType.DATE;
 import static io.trino.spi.type.DecimalType.createDecimalType;
 import static io.trino.spi.type.DoubleType.DOUBLE;
@@ -63,18 +59,15 @@ import static io.trino.spi.type.SmallintType.SMALLINT;
 import static io.trino.spi.type.TimeType.createTimeType;
 import static io.trino.spi.type.TimestampType.createTimestampType;
 import static io.trino.spi.type.Timestamps.PICOSECONDS_PER_DAY;
-import static io.trino.spi.type.Timestamps.round;
 import static io.trino.spi.type.TinyintType.TINYINT;
 import static io.trino.spi.type.VarbinaryType.VARBINARY;
 import static io.trino.spi.type.VarcharType.createUnboundedVarcharType;
 import static io.trino.spi.type.VarcharType.createVarcharType;
-
 import static java.lang.Math.max;
 import static java.lang.String.format;
 import static java.lang.String.join;
 import static java.math.RoundingMode.UNNECESSARY;
 import static java.util.stream.Collectors.joining;
-import static com.google.common.collect.Iterables.getOnlyElement;
 
 public class IRISClient
         extends BaseJdbcClient {
@@ -114,7 +107,7 @@ public class IRISClient
                 .map("$like(value: varchar, pattern: varchar): boolean").to("value LIKE pattern")
                 .map("$like(value: varchar, pattern: varchar, escape: varchar(1)): boolean").to("value LIKE pattern ESCAPE escape")
                 .map("$not($is_null(value))").to("value IS NOT NULL")
-                .map("$not(value: boolean)").to("NOT value")
+                .map("$not(value: boolean)").to("value = 0")
                 .map("$is_null(value)").to("value IS NULL")
                 .map("$nullif(first, second)").to("NULLIF(first, second)")
                 .build();
@@ -130,15 +123,6 @@ public class IRISClient
                         .add(new ImplementSum(IRISClient::toTypeHandle))
                         .add(new ImplementAvgFloatingPoint())
                         .add(new ImplementAvgDecimal())
-//                        .add(new ImplementStddevSamp())
-//                        .add(new ImplementStddevPop())
-//                        .add(new ImplementVarianceSamp())
-//                        .add(new ImplementVariancePop())
-//                        .add(new ImplementCovarianceSamp())
-//                        .add(new ImplementCovariancePop())
-//                        .add(new ImplementCorr())
-//                        .add(new ImplementRegrIntercept())
-//                        .add(new ImplementRegrSlope())
                         .build());
     }
 
@@ -147,7 +131,6 @@ public class IRISClient
         return true;
 //        return getSchemaNames(session).contains(schema);
     }
-
 
 
     @Override
@@ -190,22 +173,63 @@ public class IRISClient
     }
 
     @Override
+    protected String getColumnDefinitionSql(ConnectorSession session, ColumnMetadata column, String columnName) {
+        StringBuilder sb = new StringBuilder()
+                .append(quoted(columnName))
+                .append(" ")
+                .append(toWriteMapping(session, column.getType()).getDataType());
+        if (!column.isNullable()) {
+            sb.append(" NOT NULL");
+        }
+        if (column.getComment() != null) {
+            sb.append(" %Description " + varcharLiteral(column.getComment()));
+        }
+        return sb.toString();
+    }
+
+    @Override
+    protected void renameTable(ConnectorSession session, Connection connection, String catalogName, String remoteSchemaName, String remoteTableName, String newRemoteSchemaName, String newRemoteTableName)
+            throws SQLException
+    {
+        if (!remoteSchemaName.equals(newRemoteSchemaName)) {
+            throw new TrinoException(NOT_SUPPORTED, "This connector does not support renaming tables across schemas");
+        }
+        execute(session, connection, format(
+                "ALTER TABLE %s RENAME %s",
+                quoted(catalogName, remoteSchemaName, remoteTableName),
+                quoted(null, null, newRemoteTableName)));
+    }
+
+    @Override
     public Collection<String> listSchemas(Connection connection) {
         ImmutableSet.Builder<String> schemaNames = ImmutableSet.builder();
-        schemaNames.addAll(super.listSchemas(connection).stream().filter(
-                schema ->
-                        !schema.startsWith("%")
-                                && !schema.startsWith("ens.")
-                                && !schema.startsWith("enslib_")
-                                && !schema.startsWith("hsfhir_")
-                                && !schema.startsWith("hs_")
-        ).toList());
+        schemaNames.addAll(super.listSchemas(connection));
+
         if (schemaTableNameOverrideExist != null) {
             schemaNames.add(schemaTableNameOverrideExist);
         }
-//        schemaNames.add("sqluser");
-//        schemaNames.add("tpch");
+        try {
+            schemaNames.add(connection.getSchema().toLowerCase());
+        } catch (SQLException e) {
+
+        }
         return schemaNames.build();
+    }
+
+    protected boolean filterSchema(String schemaName) {
+        schemaName = schemaName.toLowerCase();
+        return !schemaName.startsWith("%")
+                && !schemaName.equalsIgnoreCase("information_schema")
+                && !schemaName.equalsIgnoreCase("ens")
+                && !schemaName.equalsIgnoreCase("ensportal")
+                && !schemaName.startsWith("ens_")
+                && !schemaName.startsWith("ensportal_")
+                && !schemaName.startsWith("enslib_")
+                && !schemaName.startsWith("hs_")
+                && !schemaName.startsWith("hsfhir_")
+                && !schemaName.startsWith("hsmod_")
+                && !schemaName.startsWith("schemamap_")
+                ;
     }
 
     @Override
@@ -341,6 +365,10 @@ public class IRISClient
             return WriteMapping.objectMapping(dataType, longDecimalWriteFunction(decimalType));
         }
 
+        if (type instanceof CharType) {
+            return WriteMapping.sliceMapping("char(" + ((CharType) type).getLength() + ")", charWriteFunction());
+        }
+
         if (type instanceof VarbinaryType) {
             return WriteMapping.sliceMapping("varbinary(max)", varbinaryWriteFunction());
         }
@@ -371,8 +399,7 @@ public class IRISClient
         throw new TrinoException(NOT_SUPPORTED, "Unsupported column type: " + type.getDisplayName());
     }
 
-    private static LongWriteFunction irisTimeWriteFunction(int precision)
-    {
+    private static LongWriteFunction irisTimeWriteFunction(int precision) {
         checkArgument(precision <= 12, "Unsupported precision: %s", precision);
 
         return LongWriteFunction.of(Types.TIME, (statement, index, picosOfDay) -> {
