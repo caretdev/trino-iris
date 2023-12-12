@@ -33,8 +33,8 @@ jobs:
           [ $GITHUB_EVENT_NAME == 'release' ] && VERSION=${{ github.event.release.tag_name }} && VERSION=${VERSION/v/}
           git tag -l | cat
           [ $GITHUB_EVENT_NAME == 'pull_request' ] && VERSION+=-dev.${{ github.event.pull_request.number }}
-          [ $GITHUB_EVENT_NAME != 'release' ] && VERSION+=-beta && VERSION+=.$(($(git tag -l "v$VERSION.*" | sort -nt. -k4 -k5 2>/dev/null |  tail -1 | rev | cut -d. -f1 | rev)+1))
-          NAME=trino-iris-$VERSION
+          [ $GITHUB_EVENT_NAME != 'release' ] && VERSION+=-beta && VERSION+=.$(($(git tag -l "$VERSION.*" | sort -nt. -k4 -k5 2>/dev/null |  tail -1 | rev | cut -d. -f1 | rev)+1))
+          NAME=trino-iris-$VERSION-plugin
           echo version=$VERSION >> $GITHUB_OUTPUT
           echo trino_version=${VERSION:0:3} >> $GITHUB_OUTPUT
           echo name=$NAME >> $GITHUB_OUTPUT
@@ -42,13 +42,13 @@ jobs:
           ./mvnw versions:set-property -Dproperty=revision -DnewVersion=${VERSION}
       - name: Build with Maven
         run: ./mvnw -DskipTests package
-      - name: Publish Test Report
-        if: ${{ always() }}
-        uses: scacap/action-surefire-report@v1
+#      - name: Publish Test Report
+#        if: ${{ always() }}
+#        uses: scacap/action-surefire-report@v1
       - name: Update Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.set-version.outputs.version }}
+          tag_name: ${{ steps.set-version.outputs.version }}
           prerelease: ${{ github.event_name != 'release' }}
           files: target/${{ steps.set-version.outputs.name }}.tar.gz
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -68,6 +68,6 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           IMAGE=caretdev/trino-iris
-          [ $GITHUB_EVENT_NAME == 'release' ] && TAGS="-t ${IMAGE}:latest -t ${IMAGE}:${{ steps.set-version.outputs.version }}"
-          [ $GITHUB_EVENT_NAME == 'push' ] && TAGS="-t ${IMAGE}:beta"
+          [ $GITHUB_EVENT_NAME == 'release' ] && TAGS="-t ${IMAGE}:latest -t ${IMAGE}:${{ steps.set-version.outputs.trino_version }}"
+          [ $GITHUB_EVENT_NAME == 'push' ] && TAGS="-t ${IMAGE}:beta -t ${IMAGE}:${{ steps.set-version.outputs.trino_version }}-beta"
           docker buildx build --platform linux/arm64,linux/amd64 ${TAGS} --push .
