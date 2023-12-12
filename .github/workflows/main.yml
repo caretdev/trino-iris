@@ -41,11 +41,14 @@ jobs:
           ./mvnw versions:set-property -Dproperty=version.trino -DnewVersion=${VERSION:0:3}
           ./mvnw versions:set-property -Dproperty=revision -DnewVersion=${VERSION}
           cat pom.xml
+      - name: Run Tests
+        continue-on-error: true
+        run: ./mvnw test
+      - name: Publish Test Report
+        if: ${{ always() }}
+        uses: scacap/action-surefire-report@v1
       - name: Build with Maven
         run: ./mvnw -DskipTests package
-#      - name: Publish Test Report
-#        if: ${{ always() }}
-#        uses: scacap/action-surefire-report@v1
       - name: Update Release
         uses: softprops/action-gh-release@v1
         with:
