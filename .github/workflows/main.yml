@@ -40,6 +40,7 @@ jobs:
           echo name=$NAME >> $GITHUB_OUTPUT
           ./mvnw versions:set-property -Dproperty=version.trino -DnewVersion=${VERSION:0:3}
           ./mvnw versions:set-property -Dproperty=revision -DnewVersion=${VERSION}
+          cat pom.xml
       - name: Build with Maven
         run: ./mvnw -DskipTests package
 #      - name: Publish Test Report
