@@ -44,7 +44,9 @@ jobs:
       - name: Run Tests
         continue-on-error: true
         run: |
-          echo ${{ secrets.IRIS_KEY }} > ~/iris.key
+          cat <<"EOF" > ~/iris.key
+          ${{ secrets.IRIS_KEY }}
+          EOF
           ./mvnw test
       - name: Publish Test Report
         if: ${{ always() }}
