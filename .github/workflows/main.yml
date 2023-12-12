@@ -43,7 +43,9 @@ jobs:
           cat pom.xml
       - name: Run Tests
         continue-on-error: true
-        run: ./mvnw test
+        run: |
+          echo ${{ secrets.IRIS_KEY }} > ~/iris.key
+          ./mvnw test
       - name: Publish Test Report
         if: ${{ always() }}
         uses: scacap/action-surefire-report@v1
